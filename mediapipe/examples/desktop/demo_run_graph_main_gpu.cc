@@ -155,6 +155,10 @@ DEFINE_string(output_video_path, "",
     // Convert back to opencv for display or saving.
     cv::Mat output_frame_mat = mediapipe::formats::MatView(output_frame.get());
     cv::cvtColor(output_frame_mat, output_frame_mat, cv::COLOR_RGB2BGR);
+
+    //zoom
+    cv::resize(output_frame_mat, output_frame_mat, cv::Size(), 2.0, 2.0);
+
     if (save_video) {
       if (!writer.isOpened()) {
         LOG(INFO) << "Prepare video writer.";
