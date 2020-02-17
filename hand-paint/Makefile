@@ -7,5 +7,12 @@ build:
 run:
 	cd .. && GLOG_logtostderr=1 hand-paint/hand-paint
 
-clean-run: build run
+debug:
+	cd .. && gdb ./hand-paint/hand-paint
 
+clean:
+	rm -f ./hand-paint
+
+clean-run: clean build run
+
+clean-debug: clean build debug

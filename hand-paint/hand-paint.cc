@@ -41,7 +41,10 @@ constexpr char kOutputStream[] = "output_video";
 constexpr char kLandmarksStream[] = "multi_hand_landmarks";
 constexpr char kWindowName[] = "Model Output";
 constexpr char kStatWindowName[] = "Stats";
+constexpr char kCanvasWindowName[] = "Canvas";
 
+constexpr int canvas_height = 750;
+constexpr int canvas_width = 1000;
 
 DEFINE_string(input_video_path, "",
               "Full path of video to load. "
@@ -64,6 +67,14 @@ void displayMultilineString(std::stringstream& str, cv::Mat &img,
     int y = y0 + i*dy;
     cv::putText(img, line, cv::Point(50, y ), font_style, 1.2, text_color, text_thickness);
     ++i;
+  }
+}
+
+void paintPts(const std::deque<cv::Point>& ptsQ, cv::Mat& canvas) {
+  std::deque<cv::Point>::const_iterator it = ptsQ.begin();
+  while(it != ptsQ.end()){
+    cv::circle(canvas, *it, 5, cv::Scalar(0,0,0), 2);
+    it++;
   }
 }
 
@@ -116,6 +127,13 @@ void displayMultilineString(std::stringstream& str, cv::Mat &img,
   cv::moveWindow(kStatWindowName, 1100, 0);//on the right side
   cv::Mat stat_bg(1000, 750, CV_8UC3, cv::Scalar(255,255,255)); // white background
   cv::imshow(kStatWindowName, stat_bg);
+
+  //canvas window
+  cv::namedWindow(kCanvasWindowName, 1);
+  cv::Mat canvas_bg(canvas_height, canvas_width, CV_8UC3, cv::Scalar(255,255,255)); // white background  
+  cv::imshow(kCanvasWindowName, canvas_bg);
+
+  std::deque<cv::Point> ptsQ;
 
   LOG(INFO) << "Start running the calculator graph.";
   ASSIGN_OR_RETURN(mediapipe::OutputStreamPoller poller,
@@ -176,19 +194,43 @@ void displayMultilineString(std::stringstream& str, cv::Mat &img,
     //all hands
     int hand_index = 0;
     const auto& landmarks = landmark_packet.Get<std::vector<mediapipe::NormalizedLandmarkList>>();
-    //lists of landmarks of individual hands
-    int landmark_index = 0;
+    
+    //stat stuff
     cv::Mat tmp_bg = stat_bg.clone();
     std::stringstream stat_str;
     stat_str << "++++++++\n";
+
+    //canvas stuff
+    cv::Mat canvas = canvas_bg.clone();
+
     for (const auto& landmark_list : landmarks) {
       // std::cout << landmark_list.DebugString();
+
+      //lists of landmarks of individual hands
+      int landmark_index = 0;
       for (const auto& landmark : landmark_list.landmark()) {
         std::ostringstream line_stream;
         line_stream << "[Hand<" << hand_index << ">] Landmark<" << landmark_index++ << ">: (" << landmark.x() << ", " << landmark.y() << ", " << landmark.z() << ")";
         stat_str << line_stream.str() << "\n";
         std::cout << line_stream.str() << "                         " << "\r";
+        
+        //canvas
+        // int x_loc = landmark.x()*canvas_width;
+        // int y_loc = landmark.y()*canvas_height;
+        // cv::putText(canvas, std::to_string(landmark_index - 1), cv::Point(x_loc, y_loc), cv::FONT_HERSHEY_PLAIN, 1, cv::Scalar(0,0,0));
       }
+      //canvas for individual hand
+      const auto& landmark = landmark_list.landmark()[8];
+      int x_loc = landmark.x()*canvas_width;
+      int y_loc = landmark.y()*canvas_height;
+      ptsQ.push_back(cv::Point(x_loc, y_loc));
+      if(ptsQ.size() > 10){
+        ptsQ.pop_front();
+      }
+      paintPts(ptsQ, canvas);
+      // canvas.at<cv::Vec3b>(x_loc, y_loc) = cv::Vec3b(0,0,0);//change to black
+      // cv::circle(canvas, cv::Point(x_loc, y_loc), 5, cv::Scalar(0,0,0), 2);
+      // std::cout << "DRAW:" << x_loc << "," << y_loc << "\r";
       ++hand_index;
     }
     stat_str << "--------\n";
@@ -196,6 +238,8 @@ void displayMultilineString(std::stringstream& str, cv::Mat &img,
     displayMultilineString(stat_str, tmp_bg);
     // cv::putText(tmp_bg, stat_str.str(), cv::Point(10,100), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
     cv::imshow(kStatWindowName, tmp_bg);
+
+    cv::imshow(kCanvasWindowName, canvas);
 
     // Convert GpuBuffer to ImageFrame.
     MP_RETURN_IF_ERROR(gpu_helper.RunInGlContext(
