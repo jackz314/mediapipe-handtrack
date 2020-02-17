@@ -30,9 +30,13 @@
 #include "mediapipe/gpu/gpu_buffer.h"
 #include "mediapipe/gpu/gpu_shared_data_internal.h"
 
+// landmark stuff
+#include "mediapipe/framework/formats/landmark.pb.h"
+
+
 constexpr char kInputStream[] = "input_video";
 constexpr char kOutputStream[] = "output_video";
-constexpr char kLandmarksStream[] = "hand_landmarks";
+constexpr char kLandmarksStream[] = "multi_hand_landmarks";
 constexpr char kWindowName[] = "MediaPipe";
 
 DEFINE_string(
@@ -91,7 +95,7 @@ DEFINE_string(output_video_path, "",
                    graph.AddOutputStreamPoller(kOutputStream));
 
   // hand landmarks stream
-  ASSIGN_OR_RETURN(mediapipe::OutputStreamPoller poller_landmark,
+  ASSIGN_OR_RETURN(mediapipe::OutputStreamPoller landmark_poller,
             graph.AddOutputStreamPoller(kLandmarksStream));
 
   MP_RETURN_IF_ERROR(graph.StartRun({}));
@@ -138,6 +142,14 @@ DEFINE_string(output_video_path, "",
     mediapipe::Packet packet;
     if (!poller.Next(&packet)) break;
     std::unique_ptr<mediapipe::ImageFrame> output_frame;
+
+    mediapipe::Packet landmark_packet;
+    if (!landmark_poller.Next(&landmark_packet)) break;
+
+    const auto& landmarks = landmark_packet.Get<std::vector<mediapipe::NormalizedLandmarkList>>();
+    for (const auto& landmark : landmarks) {
+      std::cout << landmark.DebugString();
+    }
 
     // Convert GpuBuffer to ImageFrame.
     MP_RETURN_IF_ERROR(gpu_helper.RunInGlContext(
