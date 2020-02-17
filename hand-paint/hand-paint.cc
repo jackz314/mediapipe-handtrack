@@ -14,6 +14,9 @@
 //
 // An example of sending OpenCV webcam frames into a MediaPipe graph.
 // This example requires a linux computer and a GPU with EGL support drivers.
+
+// Everything in this file should reference directory mediapipe as root, otherwise dependencies on files might not work
+
 #include <cstdlib>
 
 #include "mediapipe/framework/calculator_framework.h"
@@ -33,15 +36,11 @@
 // landmark stuff
 #include "mediapipe/framework/formats/landmark.pb.h"
 
-
 constexpr char kInputStream[] = "input_video";
 constexpr char kOutputStream[] = "output_video";
 constexpr char kLandmarksStream[] = "multi_hand_landmarks";
 constexpr char kWindowName[] = "MediaPipe";
 
-DEFINE_string(
-    calculator_graph_config_file, "",
-    "Name of file containing text format CalculatorGraphConfig proto.");
 DEFINE_string(input_video_path, "",
               "Full path of video to load. "
               "If not provided, attempt to use a webcam.");
@@ -49,10 +48,14 @@ DEFINE_string(output_video_path, "",
               "Full path of where to save result (.mp4 only). "
               "If not provided, show result in a window.");
 
+DEFINE_double(zoom_level, 1.5, "Zoom level of output video, default 1.5");
+
+std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pbtxt";
+
 ::mediapipe::Status RunMPPGraph() {
   std::string calculator_graph_config_contents;
   MP_RETURN_IF_ERROR(mediapipe::file::GetContents(
-      FLAGS_calculator_graph_config_file, &calculator_graph_config_contents));
+      hand_tracking_graph_file, &calculator_graph_config_contents));
   LOG(INFO) << "Get calculator graph config contents: "
             << calculator_graph_config_contents;
   mediapipe::CalculatorGraphConfig config =
@@ -83,6 +86,8 @@ DEFINE_string(output_video_path, "",
   const bool save_video = !FLAGS_output_video_path.empty();
   if (!save_video) {
     cv::namedWindow(kWindowName, /*flags=WINDOW_AUTOSIZE*/ 1);
+
+  // Camera settings, don't change
 #if (CV_MAJOR_VERSION >= 3) && (CV_MINOR_VERSION >= 2)
     capture.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     capture.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
@@ -146,9 +151,18 @@ DEFINE_string(output_video_path, "",
     mediapipe::Packet landmark_packet;
     if (!landmark_poller.Next(&landmark_packet)) break;
 
+    //all hands
+    int hand_index = 0;
     const auto& landmarks = landmark_packet.Get<std::vector<mediapipe::NormalizedLandmarkList>>();
-    for (const auto& landmark : landmarks) {
-      std::cout << landmark.DebugString();
+    //lists of landmarks of individual hands
+    int landmark_index = 0;
+    for (const auto& landmark_list : landmarks) {
+      // std::cout << landmark_list.DebugString();
+      for (const auto& landmark : landmark_list.landmark()) {
+        std::cout << "[Hand<" << hand_index << ">] Landmark<" << landmark_index++ << ">: (" << landmark.x() << ", " << landmark.y() << ", " << landmark.z() << ")\n";
+      }
+      std::cout << "\n";
+      ++hand_index;
     }
 
     // Convert GpuBuffer to ImageFrame.
@@ -175,7 +189,7 @@ DEFINE_string(output_video_path, "",
     cv::cvtColor(output_frame_mat, output_frame_mat, cv::COLOR_RGB2BGR);
 
     //zoom
-    cv::resize(output_frame_mat, output_frame_mat, cv::Size(), 2.0, 2.0);
+    cv::resize(output_frame_mat, output_frame_mat, cv::Size(), FLAGS_zoom_level, FLAGS_zoom_level);
 
     if (save_video) {
       if (!writer.isOpened()) {
