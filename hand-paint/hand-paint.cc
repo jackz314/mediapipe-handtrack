@@ -39,7 +39,9 @@
 constexpr char kInputStream[] = "input_video";
 constexpr char kOutputStream[] = "output_video";
 constexpr char kLandmarksStream[] = "multi_hand_landmarks";
-constexpr char kWindowName[] = "MediaPipe";
+constexpr char kWindowName[] = "Model Output";
+constexpr char kStatWindowName[] = "Stats";
+
 
 DEFINE_string(input_video_path, "",
               "Full path of video to load. "
@@ -51,6 +53,19 @@ DEFINE_string(output_video_path, "",
 DEFINE_double(zoom_level, 1.5, "Zoom level of output video, default 1.5");
 
 std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pbtxt";
+
+//helper function to display multi-line strings on opencv Mat
+void displayMultilineString(std::stringstream& str, cv::Mat &img, 
+    cv::HersheyFonts font_style = cv::FONT_HERSHEY_PLAIN, cv::Scalar text_color = cv::Scalar(0,0,0), int text_thickness = 1) {
+  int y0 = 50, dy = 20;
+  std::string line;
+  int i = 0;
+  while(std::getline(str, line)){
+    int y = y0 + i*dy;
+    cv::putText(img, line, cv::Point(50, y ), font_style, 1.2, text_color, text_thickness);
+    ++i;
+  }
+}
 
 ::mediapipe::Status RunMPPGraph() {
   std::string calculator_graph_config_contents;
@@ -86,6 +101,7 @@ std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pb
   const bool save_video = !FLAGS_output_video_path.empty();
   if (!save_video) {
     cv::namedWindow(kWindowName, /*flags=WINDOW_AUTOSIZE*/ 1);
+    cv::moveWindow(kWindowName, 0, 0);
 
   // Camera settings, don't change
 #if (CV_MAJOR_VERSION >= 3) && (CV_MINOR_VERSION >= 2)
@@ -94,6 +110,12 @@ std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pb
     capture.set(cv::CAP_PROP_FPS, 30);
 #endif
   }
+
+  //stats window
+  cv::namedWindow(kStatWindowName, 1);
+  cv::moveWindow(kStatWindowName, 1100, 0);//on the right side
+  cv::Mat stat_bg(1000, 750, CV_8UC3, cv::Scalar(255,255,255)); // white background
+  cv::imshow(kStatWindowName, stat_bg);
 
   LOG(INFO) << "Start running the calculator graph.";
   ASSIGN_OR_RETURN(mediapipe::OutputStreamPoller poller,
@@ -156,14 +178,24 @@ std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pb
     const auto& landmarks = landmark_packet.Get<std::vector<mediapipe::NormalizedLandmarkList>>();
     //lists of landmarks of individual hands
     int landmark_index = 0;
+    cv::Mat tmp_bg = stat_bg.clone();
+    std::stringstream stat_str;
+    stat_str << "++++++++\n";
     for (const auto& landmark_list : landmarks) {
       // std::cout << landmark_list.DebugString();
       for (const auto& landmark : landmark_list.landmark()) {
-        std::cout << "[Hand<" << hand_index << ">] Landmark<" << landmark_index++ << ">: (" << landmark.x() << ", " << landmark.y() << ", " << landmark.z() << ")\n";
+        std::ostringstream line_stream;
+        line_stream << "[Hand<" << hand_index << ">] Landmark<" << landmark_index++ << ">: (" << landmark.x() << ", " << landmark.y() << ", " << landmark.z() << ")";
+        stat_str << line_stream.str() << "\n";
+        std::cout << line_stream.str() << "                         " << "\r";
       }
-      std::cout << "\n";
       ++hand_index;
     }
+    stat_str << "--------\n";
+    // std::cout << stat_str.str() << std::endl;
+    displayMultilineString(stat_str, tmp_bg);
+    // cv::putText(tmp_bg, stat_str.str(), cv::Point(10,100), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
+    cv::imshow(kStatWindowName, tmp_bg);
 
     // Convert GpuBuffer to ImageFrame.
     MP_RETURN_IF_ERROR(gpu_helper.RunInGlContext(
@@ -203,8 +235,12 @@ std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pb
     } else {
       cv::imshow(kWindowName, output_frame_mat);
       // Press any key to exit.
-      const int pressed_key = cv::waitKey(5);
-      if (pressed_key >= 0 && pressed_key != 255) grab_frames = false;
+      // const int pressed_key = cv::waitKey(5);
+      // if (pressed_key >= 0 && pressed_key != 255) grab_frames = false;
+
+      // Press q to exit
+      const int pressed_key = cv::waitKeyEx(5);
+      if (pressed_key == 'q') grab_frames = false;
     }
   }
 
