@@ -55,7 +55,10 @@ DEFINE_string(output_video_path, "",
 
 DEFINE_double(zoom_level, 1.5, "Zoom level of output video, default 1.5");
 
-std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pbtxt";
+DEFINE_double(damp, 0.995, "Dissipation rate of water ripples");
+
+const std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pbtxt";
+std::deque<cv::Point> ptsQ;//queue to keep track of list of points
 
 //helper function to display multi-line strings on opencv Mat
 void displayMultilineString(std::stringstream& str, cv::Mat &img, 
@@ -72,10 +75,91 @@ void displayMultilineString(std::stringstream& str, cv::Mat &img,
 
 void paintPts(const std::deque<cv::Point>& ptsQ, cv::Mat& canvas) {
   std::deque<cv::Point>::const_iterator it = ptsQ.begin();
+  // cv::Point prevPt = *it;
+  // it++;
   while(it != ptsQ.end()){
-    cv::circle(canvas, *it, 5, cv::Scalar(0,0,0), 2);
+    // cv::circle(canvas, *it, 3, cv::Scalar(0,0,0), 3);
+    // cv::line(canvas, prevPt, *it, cv::Scalar(0,0,0), 3 /*thickness*/, cv::LINE_AA);
+    // prevPt = *it;
     it++;
   }
+  // std::vector<cv::Point> ptsVector(std::make_move_iterator(ptsQ.begin()), std::make_move_iterator(ptsQ.end()));
+  // cv::polylines(canvas, cv::Mat(ptsVector), false, cv::Scalar(0,0,0), 2);
+}
+
+float damping = (float) FLAGS_damp; // 0 to 1, determine how much water dissipates.
+
+//generate random float between 0 and 1 (inclusive)
+float rand_f01(){
+  return static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+}
+
+namespace cv{
+
+//takes 3d array of individual pixels (array of 3 colors) and do the ripple effect
+void process_water(std::vector<std::vector<Vec3f>>& prev, std::vector<std::vector<cv::Vec3f>>& curr) {
+
+// int i;
+// for (i=320; i<64000-320; i++){
+//   curr[i] = (((prev[i-1] + prev[i+1] + prev[i-320] + prev[i+320])/2)) - curr[i];
+//   curr[i] -= (curr[i] >> 5);
+// }
+
+  for (unsigned short i = 1; i < canvas_height - 1; ++i) {//row
+    for (unsigned short j = 1; j < canvas_width - 1; ++j) {//col
+      for (unsigned short k = 0; k < 3; ++k) {//each color, note value between 0 and 1, compliance with opencv
+          curr[i][j][k] = (
+              prev[i - 1][j][k]
+              + prev[i + 1][j][k]
+              + prev[i][j - 1][k]
+              + prev[i][j + 1][k]
+          ) / 2 - curr[i][j][k];
+          curr[i][j][k] = curr[i][j][k] * damping;//dissipate
+          if (curr[i][j][k] < 0)//edge arthmetic cases
+              curr[i][j][k] = 0;
+          if (curr[i][j][k] > 1)
+              curr[i][j][k] = 1;
+        // std::cout << curr[i][j][k] << " ";
+      }
+    }
+  }
+  // std::cout << std::endl;
+}
+
+//set cv::Mat with values in float matrix
+void arr_to_mat(Mat& mat, const std::vector<std::vector<cv::Vec3f>>& arr) {
+  // std::vector<Mat> mat_rows(arr.size());
+  // for (int i=0;i<mat_rows.size();i++) {
+  //   auto row = arr[i].data();
+  //   mat_rows[i]=Mat(arr.size(),arr[0].size(),CV_32FC3,&row);
+  // }
+  // merge(mat_rows, mat);
+
+  // auto tmp = arr.data();
+  // mat = Mat(arr.size(), arr[0].size(), CV_32FC3, &tmp);
+  for(int i = 0; i < mat.rows; ++i) {
+    for(int j = 0; j < mat.cols; ++j) {
+      mat.at<Vec3f>(i,j) = arr[i][j];
+    }
+  }
+}
+
+//convert cv::Mat to float matrix
+void mat_to_arr(const Mat& mat, std::vector<std::vector<cv::Vec3f>>& arr) {
+  // for(int i = 0; i < mat.rows; ++i) {
+  //   for(int j = 0; j < mat.cols; ++j) {
+  //     const cv::Vec3f& colors = mat.at<Vec3f>(i,j);
+  //     arr[i][j][0] = colors[0];
+  //     arr[i][j][1] = colors[1];
+  //     arr[i][j][2] = colors[2];
+  //   }
+  // }
+
+  for(int i = 0; i < mat.rows; ++i) {
+    auto colors = mat.ptr<Vec3f>(i);
+    arr[i].assign(colors, colors+mat.cols);//len is mat.cols
+  }
+}
 }
 
 ::mediapipe::Status RunMPPGraph() {
@@ -130,10 +214,13 @@ void paintPts(const std::deque<cv::Point>& ptsQ, cv::Mat& canvas) {
 
   //canvas window
   cv::namedWindow(kCanvasWindowName, 1);
-  cv::Mat canvas_bg(canvas_height, canvas_width, CV_8UC3, cv::Scalar(255,255,255)); // white background  
+  cv::Mat canvas_bg(canvas_height, canvas_width, CV_32FC3, cv::Scalar(0,0,0)); // black background, float for ripple stuff
   cv::imshow(kCanvasWindowName, canvas_bg);
 
-  std::deque<cv::Point> ptsQ;
+  //ripple stuff
+  //init ripple arrays as white background
+  std::vector<std::vector<cv::Vec3f>> curr(canvas_height, std::vector<cv::Vec3f>(canvas_width, cv::Vec3f(0,0,0)));
+  std::vector<std::vector<cv::Vec3f>> prev(canvas_height, std::vector<cv::Vec3f>(canvas_width, cv::Vec3f(0,0,0)));
 
   LOG(INFO) << "Start running the calculator graph.";
   ASSIGN_OR_RETURN(mediapipe::OutputStreamPoller poller,
@@ -201,7 +288,7 @@ void paintPts(const std::deque<cv::Point>& ptsQ, cv::Mat& canvas) {
     stat_str << "++++++++\n";
 
     //canvas stuff
-    cv::Mat canvas = canvas_bg.clone();
+    cv::Mat canvas = canvas_bg;
 
     for (const auto& landmark_list : landmarks) {
       // std::cout << landmark_list.DebugString();
@@ -223,23 +310,33 @@ void paintPts(const std::deque<cv::Point>& ptsQ, cv::Mat& canvas) {
       const auto& landmark = landmark_list.landmark()[8];
       int x_loc = landmark.x()*canvas_width;
       int y_loc = landmark.y()*canvas_height;
-      ptsQ.push_back(cv::Point(x_loc, y_loc));
-      if(ptsQ.size() > 10){
-        ptsQ.pop_front();
-      }
-      paintPts(ptsQ, canvas);
-      // canvas.at<cv::Vec3b>(x_loc, y_loc) = cv::Vec3b(0,0,0);//change to black
-      // cv::circle(canvas, cv::Point(x_loc, y_loc), 5, cv::Scalar(0,0,0), 2);
+      // if(hand_index == 0){//temporary to only track the first hand
+      //   ptsQ.push_back(cv::Point(x_loc, y_loc));
+      //   if(ptsQ.size() > 15){//queue size limit
+      //     ptsQ.pop_front();
+      //   }
+      //   paintPts(ptsQ, canvas);
+      // }
+      // canvas.at<cv::Vec3b>(x_loc, y_loc) = cv::Vec3b(rand()%256, rand()%256, rand()%256);//set to random color
+      cv::circle(canvas, cv::Point(x_loc, y_loc), 2, cv::Scalar(rand_f01(),rand_f01(),rand_f01()), 2);
       // std::cout << "DRAW:" << x_loc << "," << y_loc << "\r";
       ++hand_index;
     }
+    cv::mat_to_arr(canvas, prev);
+    cv::process_water(prev, curr);
+    cv::arr_to_mat(canvas, curr);
+    std::swap(curr, prev); //swap
+
+    
     stat_str << "--------\n";
     // std::cout << stat_str.str() << std::endl;
     displayMultilineString(stat_str, tmp_bg);
+
     // cv::putText(tmp_bg, stat_str.str(), cv::Point(10,100), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
     cv::imshow(kStatWindowName, tmp_bg);
-
     cv::imshow(kCanvasWindowName, canvas);
+
+
 
     // Convert GpuBuffer to ImageFrame.
     MP_RETURN_IF_ERROR(gpu_helper.RunInGlContext(
@@ -295,6 +392,8 @@ void paintPts(const std::deque<cv::Point>& ptsQ, cv::Mat& canvas) {
 }
 
 int main(int argc, char** argv) {
+  srand(time(NULL));//init random seed
+
   google::InitGoogleLogging(argv[0]);
   gflags::ParseCommandLineFlags(&argc, &argv, true);
   ::mediapipe::Status run_status = RunMPPGraph();
