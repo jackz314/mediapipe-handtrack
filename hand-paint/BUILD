@@ -18,6 +18,7 @@ cc_binary(
 cc_library(
     name = "hand-paint-lib",
     srcs = ["hand-paint.cc"],
+    hdrs = ["rwqueue.h", "atomicops.h"],
     deps = [
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/formats:image_frame",

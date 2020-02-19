@@ -37,7 +37,9 @@
 #include "mediapipe/framework/formats/landmark.pb.h"
 
 #include <thread>
-#include <condition_variable>
+
+//thread-safe queue
+#include "hand-paint/rwqueue.h"
 
 constexpr char kInputStream[] = "input_video";
 constexpr char kOutputStream[] = "output_video";
@@ -58,11 +60,11 @@ DEFINE_string(output_video_path, "",
 
 DEFINE_double(zoom_level, 1.5, "Zoom level of output video, default 1.5");
 
-DEFINE_double(damp, 0.995, "Dissipation rate of water ripples");
+DEFINE_double(damp, 0.9995, "Dissipation rate of water ripples");
 
 const std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pbtxt";
 std::deque<cv::Point> ptsQ;//queue to keep track of list of points
-std::condition_variable ptsCV;
+// std::condition_variable ptsCV;
 
 //helper function to display multi-line strings on opencv Mat
 void displayMultilineString(std::stringstream& str, cv::Mat &img, 
@@ -79,12 +81,12 @@ void displayMultilineString(std::stringstream& str, cv::Mat &img,
 
 void paintPts(const std::deque<cv::Point>& ptsQ, cv::Mat& canvas) {
   std::deque<cv::Point>::const_iterator it = ptsQ.begin();
-  // cv::Point prevPt = *it;
-  // it++;
+  cv::Point prevPt = *it;
+  it++;
   while(it != ptsQ.end()){
     // cv::circle(canvas, *it, 3, cv::Scalar(0,0,0), 3);
-    // cv::line(canvas, prevPt, *it, cv::Scalar(0,0,0), 3 /*thickness*/, cv::LINE_AA);
-    // prevPt = *it;
+    cv::line(canvas, prevPt, *it, cv::Scalar(0,0,0), 3 /*thickness*/, cv::LINE_AA);
+    prevPt = *it;
     it++;
   }
   // std::vector<cv::Point> ptsVector(std::make_move_iterator(ptsQ.begin()), std::make_move_iterator(ptsQ.end()));
@@ -230,18 +232,17 @@ std::mutex pts_q_mutex;
   std::vector<std::vector<cv::Vec3f>> prev(canvas_height, std::vector<cv::Vec3f>(canvas_width, cv::Vec3f(0,0,0)));
 
   //multithread stuff
-  std::queue<cv::Point> pts_to_paint;
+  rwqueue::RWQueue<cv::Point> pts_to_paint(10);//temp buffer size, may increase during runtime
 
   auto process_ripple = [&canvas_bg, &prev, &curr, &pts_to_paint](){
     int epoch = 0;
+    cv::Point pt;
     while (true){
       // std::cout << "epoch: " << epoch++ << std::endl;
       std::lock_guard<std::mutex> guard(canvas_mutex);//unlocks at the end of every loop
-      if(!pts_to_paint.empty()){
-        std::cout << "Got point" << std::endl;
-        cv::circle(canvas_bg, pts_to_paint.front(), 2, cv::Scalar(rand_f01(),rand_f01(),rand_f01()), 2);
-        pts_to_paint.pop();
-        // cv::imshow(kCanvasWindowName, canvas_bg);
+      if(pts_to_paint.try_dequeue(pt)){//has points, assign to pt
+        // std::cout << "Got point" << std::endl;
+        cv::circle(canvas_bg, pt, 2, cv::Scalar(rand_f01(),rand_f01(),rand_f01()), 2);
       }
       cv::mat_to_arr(canvas_bg, prev);
       cv::process_water(prev, curr);
@@ -368,7 +369,7 @@ std::mutex pts_q_mutex;
       // };
       // std::thread draw_thread(draw_hand_pt);
       // std::lock_guard<std::mutex> lk(canvas_mutex);
-      pts_to_paint.push(cv::Point(x_loc, y_loc));
+      pts_to_paint.enqueue(cv::Point(x_loc, y_loc));
       // ptsCV.notify_one();
 
       // std::cout << "DRAW:" << x_loc << "," << y_loc << "\r";
