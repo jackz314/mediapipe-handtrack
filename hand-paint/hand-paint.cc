@@ -63,8 +63,7 @@ DEFINE_double(zoom_level, 1.5, "Zoom level of output video, default 1.5");
 DEFINE_double(damp, 0.9995, "Dissipation rate of water ripples");
 
 const std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pbtxt";
-std::deque<cv::Point> ptsQ;//queue to keep track of list of points
-// std::condition_variable ptsCV;
+// std::deque<cv::Point> ptsQ;//queue to keep track of list of points
 
 //helper function to display multi-line strings on opencv Mat
 void displayMultilineString(std::stringstream& str, cv::Mat &img, 
@@ -79,19 +78,17 @@ void displayMultilineString(std::stringstream& str, cv::Mat &img,
   }
 }
 
-void paintPts(const std::deque<cv::Point>& ptsQ, cv::Mat& canvas) {
-  std::deque<cv::Point>::const_iterator it = ptsQ.begin();
-  cv::Point prevPt = *it;
-  it++;
-  while(it != ptsQ.end()){
-    // cv::circle(canvas, *it, 3, cv::Scalar(0,0,0), 3);
-    cv::line(canvas, prevPt, *it, cv::Scalar(0,0,0), 3 /*thickness*/, cv::LINE_AA);
-    prevPt = *it;
-    it++;
-  }
-  // std::vector<cv::Point> ptsVector(std::make_move_iterator(ptsQ.begin()), std::make_move_iterator(ptsQ.end()));
-  // cv::polylines(canvas, cv::Mat(ptsVector), false, cv::Scalar(0,0,0), 2);
-}
+// void paintPts(const std::deque<cv::Point>& ptsQ, cv::Mat& canvas) {
+//   std::deque<cv::Point>::const_iterator it = ptsQ.begin();
+//   cv::Point prevPt = *it;
+//   it++;
+//   while(it != ptsQ.end()){
+//     // cv::circle(canvas, *it, 3, cv::Scalar(0,0,0), 3);
+//     cv::line(canvas, prevPt, *it, cv::Scalar(0,0,0), 3 /*thickness*/, cv::LINE_AA);
+//     prevPt = *it;
+//     it++;
+//   }
+// }
 
 float damping = (float) FLAGS_damp; // 0 to 1, determine how much water dissipates.
 
@@ -104,13 +101,6 @@ namespace cv{
 
 //takes 3d array of individual pixels (array of 3 colors) and do the ripple effect
 void process_water(std::vector<std::vector<Vec3f>>& prev, std::vector<std::vector<cv::Vec3f>>& curr) {
-
-// int i;
-// for (i=320; i<64000-320; i++){
-//   curr[i] = (((prev[i-1] + prev[i+1] + prev[i-320] + prev[i+320])/2)) - curr[i];
-//   curr[i] -= (curr[i] >> 5);
-// }
-
   for (unsigned short i = 1; i < canvas_height - 1; ++i) {//row
     for (unsigned short j = 1; j < canvas_width - 1; ++j) {//col
       for (unsigned short k = 0; k < 3; ++k) {//each color, note value between 0 and 1, compliance with opencv
@@ -125,24 +115,13 @@ void process_water(std::vector<std::vector<Vec3f>>& prev, std::vector<std::vecto
               curr[i][j][k] = 0;
           if (curr[i][j][k] > 1)
               curr[i][j][k] = 1;
-        // std::cout << curr[i][j][k] << " ";
       }
     }
   }
-  // std::cout << std::endl;
 }
 
 //set cv::Mat with values in float matrix
 void arr_to_mat(Mat& mat, const std::vector<std::vector<cv::Vec3f>>& arr) {
-  // std::vector<Mat> mat_rows(arr.size());
-  // for (int i=0;i<mat_rows.size();i++) {
-  //   auto row = arr[i].data();
-  //   mat_rows[i]=Mat(arr.size(),arr[0].size(),CV_32FC3,&row);
-  // }
-  // merge(mat_rows, mat);
-
-  // auto tmp = arr.data();
-  // mat = Mat(arr.size(), arr[0].size(), CV_32FC3, &tmp);
   for(int i = 0; i < mat.rows; ++i) {
     for(int j = 0; j < mat.cols; ++j) {
       mat.at<Vec3f>(i,j) = arr[i][j];
@@ -152,15 +131,6 @@ void arr_to_mat(Mat& mat, const std::vector<std::vector<cv::Vec3f>>& arr) {
 
 //convert cv::Mat to float matrix
 void mat_to_arr(const Mat& mat, std::vector<std::vector<cv::Vec3f>>& arr) {
-  // for(int i = 0; i < mat.rows; ++i) {
-  //   for(int j = 0; j < mat.cols; ++j) {
-  //     const cv::Vec3f& colors = mat.at<Vec3f>(i,j);
-  //     arr[i][j][0] = colors[0];
-  //     arr[i][j][1] = colors[1];
-  //     arr[i][j][2] = colors[2];
-  //   }
-  // }
-
   for(int i = 0; i < mat.rows; ++i) {
     auto colors = mat.ptr<Vec3f>(i);
     arr[i].assign(colors, colors+mat.cols);//len is mat.cols
@@ -235,13 +205,10 @@ std::mutex pts_q_mutex;
   rwqueue::RWQueue<cv::Point> pts_to_paint(10);//temp buffer size, may increase during runtime
 
   auto process_ripple = [&canvas_bg, &prev, &curr, &pts_to_paint](){
-    int epoch = 0;
     cv::Point pt;
     while (true){
-      // std::cout << "epoch: " << epoch++ << std::endl;
       std::lock_guard<std::mutex> guard(canvas_mutex);//unlocks at the end of every loop
       if(pts_to_paint.try_dequeue(pt)){//has points, assign to pt
-        // std::cout << "Got point" << std::endl;
         cv::circle(canvas_bg, pt, 2, cv::Scalar(rand_f01(),rand_f01(),rand_f01()), 2);
       }
       cv::mat_to_arr(canvas_bg, prev);
@@ -253,19 +220,6 @@ std::mutex pts_q_mutex;
     
   };
   std::thread ripple_thread(process_ripple);
-
-  // auto draw_points = [&pts_to_paint, &canvas_bg](){
-  //   while(true){
-  //     std::unique_lock<std::mutex> lk(pts_q_mutex);
-  //     while(pts_to_paint.empty()){//wait for items
-  //       ptsCV.wait(lk);
-  //     }
-  //     if(pts_to_paint.empty()) continue;//edge cases
-      
-  //   }
-  // };
-
-  // std::thread draw_point_thread(draw_points);
 
   LOG(INFO) << "Start running the calculator graph.";
   ASSIGN_OR_RETURN(mediapipe::OutputStreamPoller poller,
@@ -332,9 +286,6 @@ std::mutex pts_q_mutex;
     std::stringstream stat_str;
     stat_str << "++++++++\n";
 
-    //canvas stuff todo: multi thread
-    // cv::Mat canvas = canvas_bg;
-
     for (const auto& landmark_list : landmarks) {
       // std::cout << landmark_list.DebugString();
 
@@ -345,16 +296,13 @@ std::mutex pts_q_mutex;
         line_stream << "[Hand<" << hand_index << ">] Landmark<" << landmark_index++ << ">: (" << landmark.x() << ", " << landmark.y() << ", " << landmark.z() << ")";
         stat_str << line_stream.str() << "\n";
         std::cout << line_stream.str() << "                         " << "\r";
-        
-        //canvas
-        // int x_loc = landmark.x()*canvas_width;
-        // int y_loc = landmark.y()*canvas_height;
-        // cv::putText(canvas, std::to_string(landmark_index - 1), cv::Point(x_loc, y_loc), cv::FONT_HERSHEY_PLAIN, 1, cv::Scalar(0,0,0));
       }
       //canvas for individual hand
       const auto& landmark = landmark_list.landmark()[8];
       int x_loc = landmark.x()*canvas_width;
       int y_loc = landmark.y()*canvas_height;
+
+      //alternative to draw ripples from lines drawn by hand
       // if(hand_index == 0){//temporary to only track the first hand
       //   ptsQ.push_back(cv::Point(x_loc, y_loc));
       //   if(ptsQ.size() > 15){//queue size limit
@@ -362,25 +310,14 @@ std::mutex pts_q_mutex;
       //   }
       //   paintPts(ptsQ, canvas);
       // }
-      // canvas.at<cv::Vec3b>(x_loc, y_loc) = cv::Vec3b(rand()%256, rand()%256, rand()%256);//set to random color
-
-      // auto draw_hand_pt = [&canvas_bg, &x_loc, &y_loc](){
-      //   cv::circle(canvas_bg, cv::Point(x_loc, y_loc), 2, cv::Scalar(rand_f01(),rand_f01(),rand_f01()), 2);        
-      // };
-      // std::thread draw_thread(draw_hand_pt);
-      // std::lock_guard<std::mutex> lk(canvas_mutex);
       pts_to_paint.enqueue(cv::Point(x_loc, y_loc));
-      // ptsCV.notify_one();
 
-      // std::cout << "DRAW:" << x_loc << "," << y_loc << "\r";
       ++hand_index;
     }
     
     stat_str << "--------\n";
-    // std::cout << stat_str.str() << std::endl;
     displayMultilineString(stat_str, tmp_bg);
 
-    // cv::putText(tmp_bg, stat_str.str(), cv::Point(10,100), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
     cv::imshow(kStatWindowName, tmp_bg);
 
     // Convert GpuBuffer to ImageFrame.
