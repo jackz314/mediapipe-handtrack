@@ -21,3 +21,7 @@ Finally, after setting up all the dependencies, to run the demo, just do `make c
 Here's a GIF of the demo:
 
 ![demo](hand-paint/demo/demo.gif)
+
+## Others
+
+The default branch for this demo is `jack`. The master branch contains [MediaPipe](https://mediapipe.dev)'s code as I forked it for reference.
