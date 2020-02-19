@@ -22,6 +22,6 @@ Here's a GIF of the demo:
 
 ![demo](hand-paint/demo/demo.gif)
 
-## Others
+## Other stuff
 
-The default branch for this demo is `jack`. The master branch contains [MediaPipe](https://mediapipe.dev)'s code as I forked it for reference.
+The default branch for this demo is `jack`. The `master` branch contains [MediaPipe](https://mediapipe.dev)'s code as I forked it for reference.
