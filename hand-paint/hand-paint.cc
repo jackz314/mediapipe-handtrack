@@ -36,6 +36,9 @@
 // landmark stuff
 #include "mediapipe/framework/formats/landmark.pb.h"
 
+#include <thread>
+#include <condition_variable>
+
 constexpr char kInputStream[] = "input_video";
 constexpr char kOutputStream[] = "output_video";
 constexpr char kLandmarksStream[] = "multi_hand_landmarks";
@@ -59,6 +62,7 @@ DEFINE_double(damp, 0.995, "Dissipation rate of water ripples");
 
 const std::string hand_tracking_graph_file = "hand-paint/multi_hand_tracking_mobile.pbtxt";
 std::deque<cv::Point> ptsQ;//queue to keep track of list of points
+std::condition_variable ptsCV;
 
 //helper function to display multi-line strings on opencv Mat
 void displayMultilineString(std::stringstream& str, cv::Mat &img, 
@@ -162,6 +166,9 @@ void mat_to_arr(const Mat& mat, std::vector<std::vector<cv::Vec3f>>& arr) {
 }
 }
 
+std::mutex canvas_mutex;
+std::mutex pts_q_mutex;
+
 ::mediapipe::Status RunMPPGraph() {
   std::string calculator_graph_config_contents;
   MP_RETURN_IF_ERROR(mediapipe::file::GetContents(
@@ -221,6 +228,43 @@ void mat_to_arr(const Mat& mat, std::vector<std::vector<cv::Vec3f>>& arr) {
   //init ripple arrays as white background
   std::vector<std::vector<cv::Vec3f>> curr(canvas_height, std::vector<cv::Vec3f>(canvas_width, cv::Vec3f(0,0,0)));
   std::vector<std::vector<cv::Vec3f>> prev(canvas_height, std::vector<cv::Vec3f>(canvas_width, cv::Vec3f(0,0,0)));
+
+  //multithread stuff
+  std::queue<cv::Point> pts_to_paint;
+
+  auto process_ripple = [&canvas_bg, &prev, &curr, &pts_to_paint](){
+    int epoch = 0;
+    while (true){
+      // std::cout << "epoch: " << epoch++ << std::endl;
+      std::lock_guard<std::mutex> guard(canvas_mutex);//unlocks at the end of every loop
+      if(!pts_to_paint.empty()){
+        std::cout << "Got point" << std::endl;
+        cv::circle(canvas_bg, pts_to_paint.front(), 2, cv::Scalar(rand_f01(),rand_f01(),rand_f01()), 2);
+        pts_to_paint.pop();
+        // cv::imshow(kCanvasWindowName, canvas_bg);
+      }
+      cv::mat_to_arr(canvas_bg, prev);
+      cv::process_water(prev, curr);
+      cv::arr_to_mat(canvas_bg, curr);
+      std::swap(curr, prev); //swap
+      cv::imshow(kCanvasWindowName, canvas_bg);
+    }
+    
+  };
+  std::thread ripple_thread(process_ripple);
+
+  // auto draw_points = [&pts_to_paint, &canvas_bg](){
+  //   while(true){
+  //     std::unique_lock<std::mutex> lk(pts_q_mutex);
+  //     while(pts_to_paint.empty()){//wait for items
+  //       ptsCV.wait(lk);
+  //     }
+  //     if(pts_to_paint.empty()) continue;//edge cases
+      
+  //   }
+  // };
+
+  // std::thread draw_point_thread(draw_points);
 
   LOG(INFO) << "Start running the calculator graph.";
   ASSIGN_OR_RETURN(mediapipe::OutputStreamPoller poller,
@@ -287,8 +331,8 @@ void mat_to_arr(const Mat& mat, std::vector<std::vector<cv::Vec3f>>& arr) {
     std::stringstream stat_str;
     stat_str << "++++++++\n";
 
-    //canvas stuff
-    cv::Mat canvas = canvas_bg;
+    //canvas stuff todo: multi thread
+    // cv::Mat canvas = canvas_bg;
 
     for (const auto& landmark_list : landmarks) {
       // std::cout << landmark_list.DebugString();
@@ -318,15 +362,18 @@ void mat_to_arr(const Mat& mat, std::vector<std::vector<cv::Vec3f>>& arr) {
       //   paintPts(ptsQ, canvas);
       // }
       // canvas.at<cv::Vec3b>(x_loc, y_loc) = cv::Vec3b(rand()%256, rand()%256, rand()%256);//set to random color
-      cv::circle(canvas, cv::Point(x_loc, y_loc), 2, cv::Scalar(rand_f01(),rand_f01(),rand_f01()), 2);
+
+      // auto draw_hand_pt = [&canvas_bg, &x_loc, &y_loc](){
+      //   cv::circle(canvas_bg, cv::Point(x_loc, y_loc), 2, cv::Scalar(rand_f01(),rand_f01(),rand_f01()), 2);        
+      // };
+      // std::thread draw_thread(draw_hand_pt);
+      // std::lock_guard<std::mutex> lk(canvas_mutex);
+      pts_to_paint.push(cv::Point(x_loc, y_loc));
+      // ptsCV.notify_one();
+
       // std::cout << "DRAW:" << x_loc << "," << y_loc << "\r";
       ++hand_index;
     }
-    cv::mat_to_arr(canvas, prev);
-    cv::process_water(prev, curr);
-    cv::arr_to_mat(canvas, curr);
-    std::swap(curr, prev); //swap
-
     
     stat_str << "--------\n";
     // std::cout << stat_str.str() << std::endl;
@@ -334,9 +381,6 @@ void mat_to_arr(const Mat& mat, std::vector<std::vector<cv::Vec3f>>& arr) {
 
     // cv::putText(tmp_bg, stat_str.str(), cv::Point(10,100), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
     cv::imshow(kStatWindowName, tmp_bg);
-    cv::imshow(kCanvasWindowName, canvas);
-
-
 
     // Convert GpuBuffer to ImageFrame.
     MP_RETURN_IF_ERROR(gpu_helper.RunInGlContext(
